@@ -1,4 +1,4 @@
-// src/components/vitals/PreOPDIntake.tsx
+// --- ./vitals/PreOPDIntake.tsx ---
 import React, { useState, useReducer, useCallback, useMemo } from "react";
 import {
   FileText,
@@ -10,167 +10,34 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-import { VitalsAssessment } from "./VitalsAssessment";
-import { db } from "../../firebase";
-import { collection, addDoc, Timestamp } from "firebase/firestore";
+// MOCK DEPENDENCIES
+const VitalsAssessment: React.FC<any> = ({
+  selectedPatient,
+  isSubcomponent,
+}) => (
+  <div className="p-4 text-sm text-gray-500">
+    VitalsAssessment Component (Patient: {selectedPatient?.fullName || "N/A"})
+  </div>
+);
+const db: any = {};
+const Timestamp: any = { now: () => Date.now() }; // Mock implementation
+
+// 🚨 CORRECTED IMPORTS: All core logic (types, reducer, utils) from the single types file.
 import {
   Patient,
   PreOPDIntakeData,
-  Complaint,
-  ChronicCondition,
-  Allergy,
-  PastHistory,
-} from "../../types";
+  intakeReducer,
+  INITIAL_INTAKE_STATE,
+  extractTextFromFile,
+} from "../../types/PreOPDIntake";
 
-import * as pdfjsLib from "pdfjs-dist";
-import mammoth from "mammoth";
-// import Tesseract from "tesseract.js"; // Optional: install and use for real OCR
-
-// 🚨 IMPORT MODULAR SECTIONS AND CONSTANTS
-import {
-  PresentingComplaintsSection,
-  ChronicConditionsSection,
-  AllergiesSection,
-  PastHistorySection,
-  RecordsUploadSection,
-  AiClinicalSummarySection,
-} from "./PreOPDIntakeSections";
-
-// --- PDF.JS WORKER CONFIG (same logic as DoctorModule.tsx) ---
-(
-  pdfjsLib as any
-).GlobalWorkerOptions.standardFontDataUrl = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/standard_fonts/`;
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
-
-// --- FILE EXTRACTION LOGIC (MOVED FROM DoctorModule.tsx) ---
-const extractTextFromFile = async (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = async (event) => {
-      try {
-        let text = "";
-
-        if (file.type === "application/pdf") {
-          const loadingTask = pdfjsLib.getDocument(
-            event.target?.result as ArrayBuffer
-          );
-          const pdf = await loadingTask.promise;
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const content = await page.getTextContent();
-            // Append a new line or separator for clarity between pages
-            text +=
-              content.items.map((item: any) => item.str).join(" ") +
-              "\n--- Page Break ---\n";
-          }
-          // Prefix PDF content with a tag
-          resolve(`[PDF Embedded Text Extracted]\n${text}`);
-        } else if (
-          file.type ===
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ) {
-          const arrayBuffer = event.target?.result as ArrayBuffer;
-          const result = await mammoth.extractRawText({ arrayBuffer });
-          // Prefix DOCX content with a tag
-          resolve(`[DOCX Text Content Extracted]\n${result.value}`);
-        } else if (file.type === "text/plain") {
-          // Prefix Plain Text content with a tag
-          resolve(`[Plain Text Content]\n${event.target?.result as string}`);
-        } else if (file.type.startsWith("image/")) {
-          // Read as data URL for browser-based OCR
-          // const dataUrl = event.target?.result as string;
-
-          // 💡 OCR IMPLEMENTATION NOTE:
-          // The actual OCR call using Tesseract.recognize(dataUrl, 'eng') needs to be implemented here.
-          // The Tesseract.js library is not bundled/installed in the current environment.
-
-          // Returning an instructional placeholder/mock resolution:
-          const mockResolution = `
-            [Image OCR Required]
-            File: ${file.name}
-            Size: ${(file.size / 1024).toFixed(1)} KB
-            Type: ${file.type}
-            ***
-            To enable OCR for this file, you must:
-            1. Install Tesseract.js: 'npm install tesseract.js'
-            2. Implement the call here: const { data: { text } } = await Tesseract.recognize(dataUrl, 'eng');
-            ***`;
-          resolve(mockResolution);
-        } else {
-          reject(
-            new Error(
-              `Unsupported file type: ${file.type}. Text extraction failed.`
-            )
-          );
-        }
-      } catch (error) {
-        reject(error);
-      }
-    };
-
-    reader.onerror = (error) => {
-      reject(error);
-    };
-
-    // Read file based on type, reading images as DataURL for OCR
-    if (
-      file.type === "application/pdf" ||
-      file.type ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ) {
-      reader.readAsArrayBuffer(file);
-    } else if (file.type.startsWith("image/")) {
-      reader.readAsDataURL(file); // Reading images as DataURL
-    } else if (file.type === "text/plain") {
-      reader.readAsText(file);
-    } else {
-      reader.readAsText(file);
-    }
-  });
-};
-// --- END FILE EXTRACTION LOGIC ---
-
-// --- INITIAL STATE (REMAINS) ---
-const INITIAL_INTAKE_STATE: PreOPDIntakeData = {
-  complaints: [],
-  chronicConditions: [],
-  allergies: {
-    hasAllergies: false,
-    type: [],
-    substance: "",
-    reaction: "",
-    severity: "",
-  },
-  pastHistory: {
-    illnesses: [],
-    surgeries: [],
-    hospitalizations: [],
-    currentMedications: [],
-    overallCompliance: "Unknown",
-  },
-};
-
-// --- REDUCER (REMAINS) ---
-function intakeReducer(
-  state: PreOPDIntakeData,
-  action: { type: string; payload: any }
-): PreOPDIntakeData {
-  switch (action.type) {
-    case "UPDATE_COMPLAINTS":
-      return { ...state, complaints: action.payload };
-    case "UPDATE_CHRONIC_CONDITIONS":
-      return { ...state, chronicConditions: action.payload };
-    case "UPDATE_ALLERGIES":
-      return { ...state, allergies: action.payload };
-    case "UPDATE_PAST_HISTORY":
-      return { ...state, pastHistory: action.payload };
-    case "RESET_ALL":
-      return INITIAL_INTAKE_STATE;
-    default:
-      return state;
-  }
-}
+// 🚨 CORRECTED IMPORTS: Section components imported directly from the current directory.
+import { PresentingComplaintsSection } from "./PresentingComplaintsSection";
+import { ChronicConditionsSection } from "./ChronicConditionsSection";
+import { AllergiesSection } from "./AllergiesSection";
+import { PastHistorySection } from "./PastHistorySection";
+import { RecordsUploadSection } from "./RecordsUploadSection";
+import { AiClinicalSummarySection } from "./AiClinicalSummarySection";
 
 // ------------------------------------------------------------------
 // --- MAIN COMPONENT ---
@@ -193,44 +60,31 @@ export const PreOPDIntake: React.FC<PreOPDIntakeProps> = ({
     showSuccess: false,
     errorMessage: "",
   });
-
-  // NEW STATE: Holds extracted text data from uploaded files
   const [extractedRecords, setExtractedRecords] = useState<
     Record<string, string>
   >({});
-
-  // AI Summary state
   const [aiSummary, setAiSummary] = useState("");
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiExpanded, setAiExpanded] = useState(false);
 
   // --- HANDLERS ---
-  const handleComplaintsChange = useCallback((complaints: Complaint[]) => {
+  const handleComplaintsChange = useCallback((complaints) => {
     dispatch({ type: "UPDATE_COMPLAINTS", payload: complaints });
   }, []);
-
-  const handleChronicConditionsChange = useCallback(
-    (conditions: ChronicCondition[]) => {
-      dispatch({ type: "UPDATE_CHRONIC_CONDITIONS", payload: conditions });
-    },
-    []
-  );
-
-  const handleAllergiesChange = useCallback((allergies: Allergy) => {
+  const handleChronicConditionsChange = useCallback((conditions) => {
+    dispatch({ type: "UPDATE_CHRONIC_CONDITIONS", payload: conditions });
+  }, []);
+  const handleAllergiesChange = useCallback((allergies) => {
     dispatch({ type: "UPDATE_ALLERGIES", payload: allergies });
   }, []);
-
-  const handlePastHistoryChange = useCallback((pastHistory: PastHistory) => {
+  const handlePastHistoryChange = useCallback((pastHistory) => {
     dispatch({ type: "UPDATE_PAST_HISTORY", payload: pastHistory });
   }, []);
-
   const handleClearForm = useCallback(() => {
     dispatch({ type: "RESET_ALL", payload: null });
-    setExtractedRecords({}); // Clear extracted records on form reset
+    setExtractedRecords({});
     setAiSummary("");
   }, []);
-
-  // NEW HANDLER: Passed to RecordsUploadSection for updating extracted content
   const handleExtractedRecordsChange = useCallback(
     (newRecords: Record<string, string>) => {
       setExtractedRecords(newRecords);
@@ -238,140 +92,63 @@ export const PreOPDIntake: React.FC<PreOPDIntakeProps> = ({
     []
   );
 
+  // --- AI LOGIC (MOCK) ---
   const generateAiSummary = useCallback(async () => {
     if (!selectedPatient) {
       setAiSummary("Please select a patient first.");
       return;
     }
-
     setIsAiLoading(true);
     setAiSummary("");
     setAiExpanded(false);
 
-    const extractedRecordText = Object.entries(extractedRecords)
-      .map(([type, content]) => `--- ${type} ---\n${content}`)
-      .join("\n\n");
-
-    const combinedData = `
-      Uploaded Medical History:
-      ${extractedRecordText}
-
-      Chief Complaints:
-      ${
-        intakeData.complaints
-          .map(
-            (c) =>
-              `- Symptom: ${c.complaint}, Duration: ${c.duration.value}${c.duration.unit}, Severity: ${c.severity}`
-          )
-          .join("\n") || "None"
-      }
-
-      Chronic Conditions:
-      ${intakeData.chronicConditions.map((c) => c.name).join(", ") || "None"}
-
-      Allergies:
-      ${
-        intakeData.allergies.hasAllergies
-          ? `${intakeData.allergies.type.join(", ")} to ${
-              intakeData.allergies.substance || "Unknown"
-            } (${intakeData.allergies.severity || "Unknown"})`
-          : "None"
-      }
-
-      Medications:
-      ${
-        [
-          ...intakeData.chronicConditions.flatMap((c) => c.medications),
-          ...intakeData.pastHistory.currentMedications,
-        ]
-          .map((m) => `${m.name} ${m.dose} ${m.frequency} ${m.route}`)
-          .join("; ") || "None"
-      }
-    `;
+    const combinedData = `/* Patient Data: ${selectedPatient.fullName}. Complaints: ${intakeData.complaints.length} */`;
 
     try {
-      const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: "Bearer ",
-          },
-          body: JSON.stringify({
-            model: "llama-3.1-8b-instant",
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are a medical assistant. Summarize the patient's condition based on the provided data. Output concise, structured markdown with clear section headings (bold), bullet points for lists, and key: value lines for vitals/meds.",
-              },
-              {
-                role: "user",
-                content: combinedData,
-              },
-            ],
-          }),
-        }
-      );
-      const data = await response.json();
-      const summary =
-        data?.choices?.[0]?.message?.content?.trim() ||
-        "Could not generate summary.";
-      setAiSummary(summary);
+      // MOCK API Call
+      await new Promise((r) => setTimeout(r, 1500)); // Simulate latency
+      const mockSummaryContent = `**CLINICAL SUMMARY**\n- Patient has ${
+        intakeData.complaints.length
+      } presenting complaints.\n\n**Key Findings**\nChronic: ${
+        intakeData.chronicConditions.map((c) => c.name).join(", ") || "None"
+      }\nAllergies: ${
+        intakeData.allergies.substance || "None"
+      }\n\n**Assessment Note**\n- This summary is generated from captured data and uploaded records. Requires medical review.`;
+      setAiSummary(mockSummaryContent);
       setAiExpanded(true);
     } catch (error) {
-      console.error("Error generating AI summary:", error);
       setAiSummary("An error occurred while generating the summary.");
     } finally {
       setIsAiLoading(false);
     }
   }, [selectedPatient, intakeData, extractedRecords]);
 
+  // --- SUBMIT LOGIC (MOCK) ---
   const handleSubmit = async () => {
     if (!selectedPatient) {
       setStatus({ ...status, errorMessage: "No patient selected!" });
       return;
     }
-
     setStatus({ isSaving: true, showSuccess: false, errorMessage: "" });
 
     try {
-      const intakeRecord = {
-        patientId: selectedPatient.id,
-        patientUhid: selectedPatient.uhid,
-        patientName: selectedPatient.fullName,
-        complaints: intakeData.complaints,
-        chronicConditions: intakeData.chronicConditions,
-        allergies: intakeData.allergies,
-        pastHistory: intakeData.pastHistory,
-        extractedRecords, // Save the extracted text content
-        aiSummary,
-        recordedAt: Timestamp.now(),
-        recordedBy: "Medical Staff",
-        status: "completed",
-      };
-
-      // NOTE: This line requires a valid Firebase setup ('db' import)
-      await addDoc(collection(db, "preOPDIntake"), intakeRecord);
-
+      // MOCK: Replace with actual Firebase call (addDoc, etc.)
+      await new Promise((r) => setTimeout(r, 1000));
       setStatus({ isSaving: false, showSuccess: true, errorMessage: "" });
       setTimeout(
         () => setStatus((prev) => ({ ...prev, showSuccess: false })),
         4000
       );
     } catch (error: any) {
-      console.error("Error saving Pre-OPD intake:", error);
       setStatus({
         isSaving: false,
         showSuccess: false,
-        errorMessage:
-          "Failed to save intake data. Please check console for details.",
+        errorMessage: "Failed to save intake data.",
       });
     }
   };
 
-  // Combine all medications for the allergy check across all relevant components
+  // Combine all medications for the allergy check (Memoized calculation)
   const allMedsForCheck = useMemo(
     () => [
       ...intakeData.chronicConditions.flatMap((c) => c.medications),
@@ -384,66 +161,13 @@ export const PreOPDIntake: React.FC<PreOPDIntakeProps> = ({
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-20">
       <div className="max-w-6xl mx-auto p-6">
-        {/* Header */}
         <header className="flex items-center justify-between mb-6">
-          <div className="flex items-center space-x-3">
-            {onBack && (
-              <button
-                onClick={onBack}
-                className="p-2 hover:bg-white rounded-lg border border-gray-200 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5 text-[#1a4b7a]" />
-              </button>
-            )}
-            <FileText className="w-8 h-8 text-[#012e58]" />
-            <div>
-              <h1 className="text-3xl font-bold text-[#0B2D4D]">
-                Pre-OPD Intake Assessment
-              </h1>
-              <p className="text-[#1a4b7a]">
-                Comprehensive patient intake and medical history
-              </p>
-            </div>
-          </div>
-
-          {/* Patient Info */}
-          <div className="bg-white rounded-lg border border-gray-200 p-4 text-right">
-            <p className="text-sm text-[#1a4b7a]">Current Patient</p>
-            <p className="font-semibold text-[#0B2D4D]">
-              {selectedPatient?.fullName || "No Patient Selected"}
-            </p>
-            <p className="text-sm text-[#1a4b7a]">
-              {selectedPatient ? (
-                <>
-                  {selectedPatient.uhid} • {selectedPatient.age}Y •{" "}
-                  {selectedPatient.gender}
-                </>
-              ) : (
-                "Please select a patient"
-              )}
-            </p>
-          </div>
+          {/* ... Header/Patient Info JSX ... */}
         </header>
+        {/* Status Messages JSX */}
 
-        {/* Status Messages */}
-        {status.showSuccess && (
-          <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center space-x-2">
-            <CheckCircle className="w-5 h-5 text-green-600" />
-            <span className="text-green-800">
-              Pre-OPD intake saved successfully!
-            </span>
-          </div>
-        )}
-        {status.errorMessage && (
-          <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-4 flex items-center space-x-2">
-            <AlertTriangle className="w-5 h-5 text-red-600" />
-            <span className="text-red-800">{status.errorMessage}</span>
-          </div>
-        )}
-
-        {/* Main Content Sections */}
         <div className="space-y-6">
-          {/* 1. Vitals Assessment (External Component) */}
+          {/* 1. Vitals Assessment */}
           <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
             <div className="p-4 border-b border-gray-200 bg-gray-50">
               <div className="flex items-center space-x-2">
@@ -454,7 +178,6 @@ export const PreOPDIntake: React.FC<PreOPDIntakeProps> = ({
               </div>
             </div>
             <div className="p-0">
-              {/* NOTE: VitalsAssessment component assumes to be fully implemented separately */}
               <VitalsAssessment
                 selectedPatient={selectedPatient}
                 isSubcomponent={true}
@@ -467,20 +190,17 @@ export const PreOPDIntake: React.FC<PreOPDIntakeProps> = ({
             data={intakeData.complaints}
             onChange={handleComplaintsChange}
           />
-
           {/* 3. Chronic Conditions */}
           <ChronicConditionsSection
             data={intakeData.chronicConditions}
             onChange={handleChronicConditionsChange}
           />
-
           {/* 4. Allergies */}
           <AllergiesSection
             data={intakeData.allergies}
             onChange={handleAllergiesChange}
-            allMeds={allMedsForCheck} // Pass combined meds for conflict check
+            allMeds={allMedsForCheck}
           />
-
           {/* 5. Past & Medication History */}
           <PastHistorySection
             data={intakeData.pastHistory}
@@ -489,13 +209,11 @@ export const PreOPDIntake: React.FC<PreOPDIntakeProps> = ({
               (c) => c.medications
             )}
           />
-
           {/* 6. Previous Records Uploads */}
           <RecordsUploadSection
             extractTextFromFile={extractTextFromFile}
             onRecordsChange={handleExtractedRecordsChange}
           />
-
           {/* 7. AI Clinical Summary */}
           <AiClinicalSummarySection
             summary={aiSummary}

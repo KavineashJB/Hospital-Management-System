@@ -29,23 +29,13 @@ import {
   Trash2,
   Hospital,
 } from "lucide-react";
-import AIAssistTab from "./AIAssistTab";
 import { db } from "../../firebase";
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  orderBy,
-  doc,
-  updateDoc,
-} from "firebase/firestore";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { Vitals } from "../../types";
 import PatientQueue from "../queue/PatientQueue";
 import { Patient } from "../../types";
 import PrescriptionModule from "../prescription/PrescriptionModule";
 import * as pdfjsLib from "pdfjs-dist";
-import mammoth from "mammoth";
 import { PrescriptionProvider } from "../../contexts/PrescriptionContext";
 import Ai from "./Ai";
 
