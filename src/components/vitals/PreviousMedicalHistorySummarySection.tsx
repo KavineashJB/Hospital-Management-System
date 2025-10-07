@@ -1,9 +1,9 @@
-// --- ./vitals/AiClinicalSummarySection.tsx ---
+// --- ./vitals/PreviousMedicalHistorySummarySection.tsx ---
 import React from "react";
 import { Bot, Loader, ClipboardCopy, Eye, EyeOff } from "lucide-react";
 import { FormattedAiSummary } from "./Utilities"; // Correct path for sibling file
 
-interface AiClinicalSummarySectionProps {
+export interface PreviousMedicalHistorySummarySectionProps {
   summary: string;
   isLoading: boolean;
   isExpanded: boolean;
@@ -11,8 +11,8 @@ interface AiClinicalSummarySectionProps {
   onGenerate: () => void;
 }
 
-export const AiClinicalSummarySection: React.FC<
-  AiClinicalSummarySectionProps
+export const PreviousMedicalHistorySummarySection: React.FC<
+  PreviousMedicalHistorySummarySectionProps
 > = ({ summary, isLoading, isExpanded, onToggleExpand, onGenerate }) => {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(summary);
@@ -23,9 +23,9 @@ export const AiClinicalSummarySection: React.FC<
       <div className="p-4 border-b border-gray-200 bg-gray-50">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <Bot className="w-5 h-5 text-[#012e58]" />
+            <Bot className="w-5 h-5 text-purple-600" />
             <h2 className="text-lg font-semibold text-[#0B2D4D]">
-              7. AI Clinical Summary (Vitals + Complaints)
+              8. Previous Medical History Summary (Records + History)
             </h2>
           </div>
           <div className="flex items-center space-x-2">
@@ -33,7 +33,7 @@ export const AiClinicalSummarySection: React.FC<
               <>
                 <button
                   onClick={copyToClipboard}
-                  className="flex items-center space-x-1 px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm"
+                  className="flex items-center space-x-1 px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors text-sm"
                 >
                   <ClipboardCopy className="w-4 h-4" />
                   <span>Copy to EMR</span>
@@ -61,7 +61,7 @@ export const AiClinicalSummarySection: React.FC<
                 <Bot className="w-4 h-4" />
               )}
               <span>
-                {isLoading ? "Generating..." : "Generate Clinical Summary"}
+                {isLoading ? "Generating..." : "Generate History Summary"}
               </span>
             </button>
           </div>
@@ -72,22 +72,29 @@ export const AiClinicalSummarySection: React.FC<
         {!summary && !isLoading && (
           <div className="text-center py-8 text-gray-500">
             <Bot className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-            <p>No AI clinical summary generated yet</p>
+            <p>No AI history summary generated yet</p>
+            <p className="text-sm">
+              Click "Generate History Summary" to summarize uploaded documents
+              and structured history.
+            </p>
           </div>
         )}
+
         {isLoading && (
           <div className="flex items-center justify-center py-8">
-            <Loader className="w-8 h-8 animate-spin text-[#012e58] mr-3" />
+            <Loader className="w-8 h-8 animate-spin text-purple-600 mr-3" />
             <span className="text-gray-600">
-              Analyzing patient data and generating summary...
+              Analyzing uploaded records and generating summary...
             </span>
           </div>
         )}
+
         {summary && isExpanded && (
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
             <FormattedAiSummary summary={summary} />
           </div>
         )}
+
         {summary && !isExpanded && (
           <div className="p-3 bg-gray-100 border border-gray-200 rounded-lg">
             <p className="text-sm text-gray-600 truncate">

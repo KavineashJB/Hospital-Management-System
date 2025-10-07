@@ -1,21 +1,6 @@
 // --- ./vitals/Utilities.tsx ---
 import React from "react";
-import { ClipboardCopy } from "lucide-react"; // Assuming import of icons from main file
-
-/**
- * Helper component for rendering standardized section headers.
- */
-export const SectionHeader: React.FC<{
-  icon: React.ElementType;
-  title: string;
-}> = ({ icon: Icon, title }) => (
-  <div className="flex items-center space-x-2 mb-4">
-    <div className="p-1.5 rounded-lg bg-[#e0f7fa]">
-      <Icon className="w-5 h-5 text-[#012e58]" />
-    </div>
-    <h2 className="text-lg font-bold text-[#0B2D4D] tracking-tight">{title}</h2>
-  </div>
-);
+// Assuming lucide icons are available globally
 
 /**
  * Renders the AI summary using structured markdown elements.
