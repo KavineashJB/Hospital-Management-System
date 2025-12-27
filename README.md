@@ -69,17 +69,30 @@
 
 ---
 
-### **📂 Project Structure**
+## 📂 **Project Structure**
 
+```text
 src/
 ├── 📂 components/
-│ ├── 🩺 doctor/ # Consultation, AI Assist, Diagnosis
-│ ├── 🏥 vitals/ # Pre-OPD, Vitals Recording
-│ ├── 💊 pharmacy/ # Inventory, Billing, fulfillment
-│ ├── 🔐 auth/ # Login, Protected Routes
-│ └── 🖥️ layout/ # Sidebar, Header, UI Wrappers
-├── 📂 contexts/ # Global State (Auth, Prescription)
-├── 📂 types/ # TypeScript Interfaces
-├── 📂 lib/ # Utilities & Helpers
-├── 📜 firebase.ts # Firebase Init
-└── 📜 main.tsx # Entry Point
+│   ├── 🔐 auth/            # Login, Signup, Protected Routes
+│   ├── 🩺 doctor/          # AI Assist, Consultation, Diagnosis
+│   ├── 🏥 vitals/          # Pre-OPD Intake, Vitals Assessment
+│   ├── 💊 pharmacy/        # Inventory, Billing, Prescription Fulfillment
+│   ├── 🧪 LabModule/       # Lab Test Queue & Management
+│   ├── 📝 registration/    # Patient Registration & Package Management
+│   ├── 👥 queue/           # Patient Queue (OPD & IPD)
+│   ├── 💼 Staff/           # Staff Dashboard
+│   ├── 💁 Receptionist/    # Receptionist Dashboard
+│   ├── 🛌 IP/              # In-Patient Management
+│   ├── 👤 Patients/        # Patient Dashboard
+│   ├── 💳 billing/         # General Billing Module
+│   ├── 🖥️ layout/          # Sidebar, Header, Main Layout
+│   └── 🧩 ui/              # Reusable UI Components & Form Elements
+├── 📂 contexts/            # Global State (Auth, Prescription)
+├── 📂 data/                # Mock Data & Static Constants
+├── 📂 pages/               # Admin Configuration & Pages
+├── 📂 types/               # TypeScript Type Definitions
+├── 📜 App.tsx              # Main Application Routing
+├── 📜 firebase.ts          # Firebase Initialization
+└── 📜 main.tsx             # Entry Point
+```
