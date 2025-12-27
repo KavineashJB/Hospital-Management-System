@@ -1,0 +1,1965 @@
+// src/components/doctor/DoctorModule.tsx
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
+import {
+  Stethoscope,
+  Pill,
+  ArrowLeft,
+  Brain,
+  CheckCircle,
+  Save,
+  Eye,
+  BookOpen,
+  X,
+  Plus,
+  Trash2,
+  Hospital,
+  Loader,
+  ClipboardList,
+  Activity,
+  GripVertical,
+  List,
+} from "lucide-react";
+import { db } from "../../firebase";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  setDoc,
+  addDoc,
+  Timestamp,
+  getDocs,
+  orderBy,
+  limit,
+} from "firebase/firestore";
+import {
+  Vitals,
+  Patient,
+  Complaint,
+  ChronicCondition,
+  Allergy,
+  PastHistory,
+} from "../../types";
+import PatientQueue from "../queue/PatientQueue";
+import PrescriptionModule from "../prescription/PrescriptionModule";
+import {
+  PrescriptionProvider,
+  usePrescription,
+} from "../../contexts/PrescriptionContext";
+import Ai from "./Ai";
+import { useAuth } from "../../contexts/AuthContext";
+import ConsultationSummaryModal from "./ConsultationSummaryModal";
+
+// 🚨 IMPORT MODULAR SECTIONS FROM VITALS
+import {
+  ChronicConditionsSection,
+  AllergiesSection,
+  PastHistorySection,
+  MOCK_MASTERS,
+} from "../vitals/PreOPDIntakeSections";
+
+// --- INTERFACES ---
+interface DoctorModuleProps {
+  selectedPatient?: Patient | null;
+  onBack?: () => void;
+  onCompleteConsultation: (patientId: string) => void;
+}
+
+interface AdmissionData {
+  roomNumber: string;
+  wardNumber: string;
+  admissionDate: string;
+  attendingDoctor: string;
+  assignedNurse: string;
+  expectedDischargeDate: string;
+  reasonForAdmission: string;
+  additionalNotes: string;
+}
+
+// --- RESIZE HANDLE COMPONENTS ---
+const ResizeHandle: React.FC<{
+  onMouseDown: (e: React.MouseEvent) => void;
+}> = ({ onMouseDown }) => (
+  <div
+    onMouseDown={onMouseDown}
+    className="w-full flex items-center justify-center cursor-row-resize py-1 hover:bg-gray-100 transition-colors group"
+    title="Drag to resize section height"
+  >
+    <div className="h-1 w-16 bg-gray-300 rounded-full group-hover:bg-[#012e58] transition-colors" />
+  </div>
+);
+
+const HorizontalResizeHandle: React.FC<{
+  onMouseDown: (e: React.MouseEvent) => void;
+}> = ({ onMouseDown }) => (
+  <div
+    onMouseDown={onMouseDown}
+    className="hidden lg:flex w-4 items-center justify-center cursor-col-resize hover:bg-gray-100 transition-colors group z-10"
+    title="Drag to resize column width"
+  >
+    <div className="w-1 h-8 bg-gray-300 rounded-full group-hover:bg-[#012e58] transition-colors" />
+  </div>
+);
+
+// --- AUTOCOMPLETE INPUT WITH SMALL ADD BUTTON ---
+const AutocompleteInput: React.FC<{
+  symptomId: number;
+  value: string;
+  onChange: (symptomId: number, value: string) => void;
+  symptomOptions: string[];
+  addSymptomOption: (symptom: string) => void;
+  placeholder?: string;
+}> = ({
+  symptomId,
+  value,
+  onChange,
+  symptomOptions,
+  addSymptomOption,
+  placeholder = "Enter symptom",
+}) => {
+  const [inputValue, setInputValue] = useState(value);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setInputValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        wrapperRef.current &&
+        !wrapperRef.current.contains(event.target as Node)
+      ) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [wrapperRef]);
+
+  // ✅ FILTER BY STARTSWITH
+  const filteredSymptoms = symptomOptions.filter((s) =>
+    s.toLowerCase().startsWith(inputValue.toLowerCase())
+  );
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVal = e.target.value;
+    setInputValue(newVal);
+    onChange(symptomId, newVal);
+    setShowDropdown(true);
+  };
+
+  const handleSelectSymptom = (symptom: string) => {
+    setInputValue(symptom);
+    onChange(symptomId, symptom);
+    setShowDropdown(false);
+  };
+
+  const handleAddSymptom = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (inputValue.trim()) {
+      addSymptomOption(inputValue.trim());
+      handleSelectSymptom(inputValue.trim());
+    }
+  };
+
+  const showAddButton =
+    inputValue &&
+    !symptomOptions.some((s) => s.toLowerCase() === inputValue.toLowerCase());
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <div className="relative">
+        <input
+          type="text"
+          value={inputValue}
+          onChange={handleInputChange}
+          onFocus={() => setShowDropdown(true)}
+          className="p-2 pr-10 border border-gray-300 rounded-md w-full bg-gray-50 focus:ring-2 focus:ring-[#012e58] focus:border-[#012e58] transition duration-200 ease-in-out text-[#0B2D4D] placeholder:text-gray-500 text-lg"
+          placeholder={placeholder}
+        />
+        {showAddButton && (
+          <button
+            type="button"
+            onClick={handleAddSymptom}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors flex items-center justify-center shadow-sm border border-green-200"
+            title="Add new symptom to database"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+      {showDropdown && filteredSymptoms.length > 0 && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-48 overflow-y-auto">
+          {filteredSymptoms.map((symptom, index) => (
+            <div
+              key={index}
+              onClick={() => handleSelectSymptom(symptom)}
+              className="px-4 py-2 text-lg text-gray-700 hover:bg-gray-100 cursor-pointer"
+            >
+              {symptom}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- CUSTOM LOCAL COMPONENT FOR PRESENTING COMPLAINTS ---
+const DoctorPresentingComplaintsSection: React.FC<{
+  data: Complaint[];
+  onChange: (data: Complaint[]) => void;
+  symptomOptions: string[];
+  addSymptomOption: (symptom: string) => void;
+}> = ({ data, onChange, symptomOptions, addSymptomOption }) => {
+  const addComplaint = () => {
+    if (data.length >= 5) return;
+    onChange([
+      ...data,
+      {
+        id: Date.now().toString(),
+        complaint: "",
+        severity: "",
+        duration: { value: "", unit: "d" },
+        specialty: "",
+        redFlagTriggered: false,
+        notes: "",
+      },
+    ]);
+  };
+
+  const updateComplaint = (id: string, field: keyof Complaint, value: any) => {
+    onChange(
+      data.map((c) => {
+        if (c.id === id) {
+          const updated = { ...c, [field]: value };
+          if (field === "complaint" || field === "severity") {
+            const masterComplaint = MOCK_MASTERS.complaints.find(
+              (m) => m.label.toLowerCase() === updated.complaint.toLowerCase()
+            );
+            if (masterComplaint) {
+              updated.specialty = masterComplaint.specialty;
+              updated.redFlagTriggered =
+                masterComplaint.redFlag && updated.severity === "Severe";
+            } else {
+              updated.redFlagTriggered = false;
+            }
+          }
+          return updated;
+        }
+        return c;
+      })
+    );
+  };
+
+  const removeComplaint = (id: string) => {
+    onChange(data.filter((c) => c.id !== id));
+  };
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm h-full flex flex-col">
+      <div className="p-4 border-b border-gray-200 bg-gray-50 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <ClipboardList className="w-5 h-5 text-[#012e58]" />
+            <h2 className="text-lg font-semibold text-[#0B2D4D]">
+              Present Complaint(s)
+            </h2>
+          </div>
+          <button
+            onClick={addComplaint}
+            disabled={data.length >= 5}
+            className="flex items-center space-x-1 px-3 py-1 bg-[#012e58] text-white rounded-md hover:bg-[#1a4b7a] transition-colors text-sm disabled:bg-gray-400"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4 flex-1 overflow-y-auto">
+        {data.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            <List className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+            <p>No complaints recorded yet</p>
+          </div>
+        ) : (
+          <div className="border border-gray-200 rounded-lg">
+            <div className="grid grid-cols-12 gap-3 px-4 py-3 bg-gray-100 border-b border-gray-200 font-semibold text-[#0B2D4D] text-sm uppercase tracking-wide rounded-t-lg">
+              <div className="col-span-3">Chief Complaint</div>
+              <div className="col-span-2">Severity</div>
+              <div className="col-span-2">Duration</div>
+              <div className="col-span-4">Notes</div>
+              <div className="col-span-1 text-center">Action</div>
+            </div>
+            <div className="bg-gray-50 divide-y divide-gray-200">
+              {data.map((complaint) => (
+                <div key={complaint.id} className="p-4">
+                  <div className="grid grid-cols-12 gap-3 items-center">
+                    <div className="col-span-3">
+                      <AutocompleteInput
+                        symptomId={Number(complaint.id)}
+                        value={complaint.complaint}
+                        onChange={(_id, value) =>
+                          updateComplaint(complaint.id, "complaint", value)
+                        }
+                        symptomOptions={symptomOptions}
+                        addSymptomOption={addSymptomOption}
+                        placeholder="Complaint"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <select
+                        value={complaint.severity}
+                        onChange={(e) =>
+                          updateComplaint(
+                            complaint.id,
+                            "severity",
+                            e.target.value
+                          )
+                        }
+                        className="p-2 border border-gray-300 rounded-md w-full bg-white focus:ring-2 focus:ring-[#012e58] focus:border-[#012e58] transition duration-200 ease-in-out text-[#0B2D4D] text-lg"
+                      >
+                        <option value="">Select</option>
+                        {MOCK_MASTERS.severity.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="flex space-x-1">
+                        <input
+                          type="number"
+                          min="1"
+                          value={complaint.duration.value}
+                          onChange={(e) =>
+                            updateComplaint(complaint.id, "duration", {
+                              ...complaint.duration,
+                              value: e.target.value,
+                            })
+                          }
+                          className="p-2 border border-gray-300 rounded-md w-1/2 bg-white focus:ring-2 focus:ring-[#012e58] text-[#0B2D4D] text-lg"
+                        />
+                        <select
+                          value={complaint.duration.unit}
+                          onChange={(e) =>
+                            updateComplaint(complaint.id, "duration", {
+                              ...complaint.duration,
+                              unit: e.target.value as any,
+                            })
+                          }
+                          className="p-2 border border-gray-300 rounded-md w-1/2 bg-white focus:ring-2 focus:ring-[#012e58] text-[#0B2D4D] text-lg"
+                        >
+                          <option value="h">hrs</option>
+                          <option value="d">days</option>
+                          <option value="w">wks</option>
+                          <option value="mo">mos</option>
+                          <option value="yr">yrs</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="col-span-4">
+                      <input
+                        type="text"
+                        value={complaint.notes || ""}
+                        onChange={(e) =>
+                          updateComplaint(complaint.id, "notes", e.target.value)
+                        }
+                        className="p-2 border border-gray-300 rounded-md w-full bg-white focus:ring-2 focus:ring-[#012e58] text-[#0B2D4D] text-lg"
+                        placeholder="Notes"
+                      />
+                    </div>
+                    <div className="col-span-1 flex justify-center">
+                      <button
+                        onClick={() => removeComplaint(complaint.id)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-md"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  {complaint.redFlagTriggered && (
+                    <div className="mt-2 flex items-center bg-red-100 text-red-800 p-2 rounded-md text-sm font-semibold">
+                      <span className="mr-2">🚨</span> RED FLAG: Severe{" "}
+                      {complaint.complaint}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Helper component for section headers
+const SectionHeader: React.FC<{
+  icon: React.ElementType;
+  title: string;
+  dragHandle?: React.ReactNode;
+}> = ({ icon: Icon, title, dragHandle }) => (
+  <div className="flex items-center justify-between mb-3 select-none">
+    <div className="flex items-center space-x-2">
+      <div className="bg-[#012e58]/10 p-1.5 rounded-md">
+        <Icon className="w-4 h-4 text-[#012e58]" />
+      </div>
+      <h2 className="text-lg font-bold text-[#0B2D4D] tracking-tight">
+        {title}
+      </h2>
+    </div>
+    {dragHandle && (
+      <div className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-[#012e58] p-1 rounded hover:bg-gray-100 transition-colors">
+        {dragHandle}
+      </div>
+    )}
+  </div>
+);
+
+const SummaryCard: React.FC<{
+  title: string;
+  summary: string;
+  isLoading: boolean;
+}> = ({ title, summary, isLoading }) => {
+  const isAvailable =
+    summary &&
+    summary.toLowerCase().indexOf("n/a - not generated") === -1 &&
+    summary.toLowerCase().indexOf("no pre-opd intake") === -1 &&
+    summary.toLowerCase().indexOf("error fetching") === -1;
+  const color = title.toLowerCase().includes("clinical") ? "blue" : "purple";
+
+  return (
+    <div
+      className={`p-4 rounded-lg border shadow-sm h-full ${
+        isAvailable
+          ? `border-${color}-300 bg-${color}-50`
+          : "border-gray-200 bg-gray-50"
+      }`}
+    >
+      <h4 className="text-md font-semibold text-[#0B2D4D] border-b pb-2 mb-2">
+        {title}
+      </h4>
+      {isLoading ? (
+        <div className="flex items-center justify-center py-4">
+          <Loader className="w-5 h-5 animate-spin text-[#012e58] mr-3" />
+          <span className="text-sm text-gray-600">
+            Fetching latest summary...
+          </span>
+        </div>
+      ) : isAvailable ? (
+        <div className="overflow-y-auto max-h-60 text-sm">
+          {/* <FormattedAiSummary summary={summary} /> */}
+          <div className="whitespace-pre-line text-[#1a4b7a]">{summary}</div>
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500 py-4 text-center">{summary}</p>
+      )}
+    </div>
+  );
+};
+
+const InPatientAdmissionModal: React.FC<{
+  patient: Patient;
+  onClose: () => void;
+  onConfirm: (data: AdmissionData) => void;
+}> = ({ patient, onClose, onConfirm }) => {
+  const [formData, setFormData] = useState<AdmissionData>({
+    roomNumber: "",
+    wardNumber: "General Ward",
+    admissionDate: new Date().toISOString().slice(0, 10),
+    attendingDoctor: patient.doctorAssigned || "",
+    assignedNurse: "",
+    expectedDischargeDate: "",
+    reasonForAdmission: "",
+    additionalNotes: "",
+  });
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const handleChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >
+  ) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    if (formErrors[name]) {
+      setFormErrors((prev) => ({ ...prev, [name]: "" }));
+    }
+  };
+
+  const validate = () => {
+    const errors: Record<string, string> = {};
+    if (!formData.roomNumber.trim())
+      errors.roomNumber = "Room Number is required.";
+    if (!formData.wardNumber) errors.wardNumber = "Ward is required.";
+    if (!formData.admissionDate)
+      errors.admissionDate = "Admission Date is required.";
+    if (!formData.attendingDoctor.trim())
+      errors.attendingDoctor = "Attending Doctor is required.";
+    if (!formData.assignedNurse.trim())
+      errors.assignedNurse = "Assigned Nurse is required.";
+    if (!formData.expectedDischargeDate)
+      errors.expectedDischargeDate = "Expected Discharge Date is required.";
+    if (!formData.reasonForAdmission.trim())
+      errors.reasonForAdmission = "Reason for Admission is required.";
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validate()) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      setSuccessMessage(
+        `Patient ${patient.fullName} successfully admitted to Ward ${formData.wardNumber}, Room ${formData.roomNumber}.`
+      );
+      onConfirm(formData);
+    } catch (error) {
+      console.error("Error during in-patient admission:", error);
+      setSuccessMessage(
+        `Admission failed: ${
+          error instanceof Error ? error.message : "Network error."
+        }`
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const inputStyle = (hasError: boolean) =>
+    `w-full px-3 py-2 border rounded-md text-lg transition-colors ${
+      hasError
+        ? "border-red-500 focus:ring-red-500"
+        : "border-gray-300 focus:ring-[#012e58] focus:border-[#012e58]"
+    }`;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[95vh] overflow-y-auto">
+        <div className="flex justify-between items-center p-5 border-b bg-[#012e58]/5">
+          <h2 className="text-xl font-bold text-[#0B2D4D]">
+            Admit Patient: {patient.fullName}
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-800 p-1 rounded-full hover:bg-gray-200"
+          >
+            <X />
+          </button>
+        </div>
+
+        {successMessage ? (
+          <div className="p-8 text-center">
+            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+            <p className="text-lg font-semibold text-[#0B2D4D]">
+              {successMessage}
+            </p>
+            <button
+              onClick={onClose}
+              className="mt-6 px-6 py-2 bg-[#012e58] text-white rounded-lg"
+            >
+              Close
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Room Number */}
+              <div>
+                <label className="block text-md font-medium text-gray-700 mb-1">
+                  Room Number *
+                </label>
+                <input
+                  type="text"
+                  name="roomNumber"
+                  value={formData.roomNumber}
+                  onChange={handleChange}
+                  className={inputStyle(!!formErrors.roomNumber)}
+                  placeholder="e.g., 301"
+                />
+                {formErrors.roomNumber && (
+                  <p className="text-red-500 text-md mt-1">
+                    {formErrors.roomNumber}
+                  </p>
+                )}
+              </div>
+              {/* Other inputs... */}
+              <div>
+                <label className="block text-md font-medium text-gray-700 mb-1">
+                  Ward Number *
+                </label>
+                <select
+                  name="wardNumber"
+                  value={formData.wardNumber}
+                  onChange={handleChange}
+                  className={inputStyle(!!formErrors.wardNumber)}
+                >
+                  <option value="">Select Ward</option>
+                  <option value="General Ward">General Ward</option>
+                  <option value="ICU">ICU</option>
+                  <option value="Emergency">Emergency</option>
+                  <option value="Pediatrics">Pediatrics</option>
+                </select>
+                {formErrors.wardNumber && (
+                  <p className="text-red-500 text-md mt-1">
+                    {formErrors.wardNumber}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-md font-medium text-gray-700 mb-1">
+                  Admission Date *
+                </label>
+                <input
+                  type="date"
+                  name="admissionDate"
+                  value={formData.admissionDate}
+                  onChange={handleChange}
+                  className={inputStyle(!!formErrors.admissionDate)}
+                />
+                {formErrors.admissionDate && (
+                  <p className="text-red-500 text-md mt-1">
+                    {formErrors.admissionDate}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-md font-medium text-gray-700 mb-1">
+                  Attending Doctor *
+                </label>
+                <input
+                  type="text"
+                  name="attendingDoctor"
+                  value={formData.attendingDoctor}
+                  onChange={handleChange}
+                  className={inputStyle(!!formErrors.attendingDoctor)}
+                  placeholder="Doctor Name"
+                />
+                {formErrors.attendingDoctor && (
+                  <p className="text-red-500 text-md mt-1">
+                    {formErrors.attendingDoctor}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-md font-medium text-gray-700 mb-1">
+                  Assigned Nurse *
+                </label>
+                <input
+                  type="text"
+                  name="assignedNurse"
+                  value={formData.assignedNurse}
+                  onChange={handleChange}
+                  className={inputStyle(!!formErrors.assignedNurse)}
+                  placeholder="Nurse Name"
+                />
+                {formErrors.assignedNurse && (
+                  <p className="text-red-500 text-md mt-1">
+                    {formErrors.assignedNurse}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-md font-medium text-gray-700 mb-1">
+                  Expected Discharge Date *
+                </label>
+                <input
+                  type="date"
+                  name="expectedDischargeDate"
+                  value={formData.expectedDischargeDate}
+                  onChange={handleChange}
+                  className={inputStyle(!!formErrors.expectedDischargeDate)}
+                />
+                {formErrors.expectedDischargeDate && (
+                  <p className="text-red-500 text-md mt-1">
+                    {formErrors.expectedDischargeDate}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div>
+              <label className="block text-md font-medium text-gray-700 mb-1">
+                Reason for Admission *
+              </label>
+              <textarea
+                name="reasonForAdmission"
+                rows={2}
+                value={formData.reasonForAdmission}
+                onChange={handleChange}
+                className={inputStyle(!!formErrors.reasonForAdmission)}
+                placeholder="Detailed reason for patient admission"
+              ></textarea>
+              {formErrors.reasonForAdmission && (
+                <p className="text-red-500 text-md mt-1">
+                  {formErrors.reasonForAdmission}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-md font-medium text-gray-700 mb-1">
+                Additional Notes (Optional)
+              </label>
+              <textarea
+                name="additionalNotes"
+                rows={3}
+                value={formData.additionalNotes}
+                onChange={handleChange}
+                className={inputStyle(false)}
+                placeholder="Any special instructions or observations"
+              ></textarea>
+            </div>
+            <div className="flex justify-end pt-4 border-t">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex items-center space-x-2 px-6 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition-colors disabled:bg-gray-400"
+              >
+                {isSubmitting ? (
+                  <Loader className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+                <span>
+                  {isSubmitting ? "Admitting..." : "Confirm Admission"}
+                </span>
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- Main DoctorModule Component ---
+const DoctorModuleContent: React.FC<DoctorModuleProps> = ({
+  selectedPatient,
+  onBack,
+  onCompleteConsultation,
+}) => {
+  const { medications } = usePrescription();
+  const { user } = useAuth();
+  const doctorId = user?.id || "UnknownDoctorId";
+  const doctorName =
+    user?.name || selectedPatient?.doctorAssigned || "Unknown Doctor";
+  const patientType = selectedPatient?.patientType || "OPD";
+
+  const [vitals, setVitals] = useState<Vitals | null>(null);
+  const [showAdmissionModal, setShowAdmissionModal] = useState(false);
+  const [finalDiagnosis, setFinalDiagnosis] = useState("");
+  const [preOpdClinicalSummary, setPreOpdClinicalSummary] = useState("");
+  const [preOpdHistorySummary, setPreOpdHistorySummary] = useState("");
+  const [isPreOpdLoading, setIsPreOpdLoading] = useState(true);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+
+  // --- NEW STATE: Lifted Advice State ---
+  const [advice, setAdvice] = useState<{
+    general: string;
+    diet: string[];
+    followUp: {
+      enabled: boolean;
+      duration: string;
+      unit: "Days" | "Months" | "Years";
+    };
+  }>({
+    general: "",
+    diet: [],
+    followUp: { enabled: false, duration: "", unit: "Days" },
+  });
+
+  // --- NEW STATE: Recent General Advices ---
+  const [recentGeneralAdvices, setRecentGeneralAdvices] = useState<string[]>(
+    []
+  );
+
+  // --- NEW STATE: Vitals Intake Data (Auto-filled) ---
+  const [intakeData, setIntakeData] = useState<{
+    complaints: Complaint[];
+    chronicConditions: ChronicCondition[];
+    allergies: Allergy;
+    pastHistory: PastHistory;
+  }>({
+    complaints: [],
+    chronicConditions: [],
+    allergies: {
+      hasAllergies: false,
+      type: [],
+      substance: "",
+      reaction: "",
+      severity: "",
+    },
+    pastHistory: {
+      illnesses: [],
+      surgeries: [],
+      hospitalizations: [],
+      currentMedications: [],
+      overallCompliance: "Unknown",
+    },
+  });
+
+  // --- SHOW/HIDE TOGGLES FOR EXAMINATION ---
+  const [showGeneralExam, setShowGeneralExam] = useState(false);
+  const [showSystemicExam, setShowSystemicExam] = useState(false);
+
+  // --- DRAG & DROP STATE ---
+  type SectionKey =
+    | "assessment"
+    | "complaints"
+    | "chronic"
+    | "allergies"
+    | "history"
+    | "exam"
+    | "ai"
+    | "prescription";
+
+  const [sectionOrder, setSectionOrder] = useState<SectionKey[]>([
+    "assessment",
+    "complaints",
+    "chronic",
+    "allergies",
+    "history",
+    "exam",
+    "ai",
+    "prescription",
+  ]);
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
+
+  // --- VERTICAL RESIZE STATE ---
+  const [sectionHeights, setSectionHeights] = useState({
+    assessment: 500,
+    complaints: 400,
+    chronic: 400,
+    allergies: 400,
+    history: 500,
+    exam: 450,
+    ai: 500,
+    prescription: 500,
+  });
+
+  const draggingRef = useRef<keyof typeof sectionHeights | null>(null);
+  const startYRef = useRef<number>(0);
+  const startHeightRef = useRef<number>(0);
+
+  // --- HORIZONTAL RESIZE STATE (Exam) ---
+  const [examColSplit, setExamColSplit] = useState(50);
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+  const examContainerRef = useRef<HTMLDivElement>(null);
+  const draggingHorizontalRef = useRef(false);
+
+  // --- HORIZONTAL RESIZE STATE (Pre-OPD) ---
+  const [preOpdColSplit, setPreOpdColSplit] = useState(50);
+  const preOpdContainerRef = useRef<HTMLDivElement>(null);
+  const draggingPreOpdHorizontalRef = useRef(false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 1024);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // --- FETCH RECENT GENERAL ADVICES (Client-side Sort to avoid Index Error) ---
+  useEffect(() => {
+    if (!doctorId) return;
+
+    const fetchRecentAdvices = async () => {
+      try {
+        // 🚨 CHANGED: Removed orderBy/limit from query to avoid "Missing Index" error.
+        // We fetch the doctor's prescriptions and sort client-side.
+        // For production with many records, create the index and revert to orderBy("prescriptionDate", "desc").
+        const q = query(
+          collection(db, "prescriptions"),
+          where("doctorId", "==", doctorId)
+        );
+
+        const snapshot = await getDocs(q);
+
+        const allPrescriptions = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          // Handle Timestamp or Date string
+          let date = new Date(0);
+          if (data.prescriptionDate?.toDate) {
+            date = data.prescriptionDate.toDate();
+          } else if (data.prescriptionDate) {
+            date = new Date(data.prescriptionDate);
+          }
+          return {
+            advice: data.generalAdvice as string,
+            date: date,
+          };
+        });
+
+        // Sort descending by date
+        allPrescriptions.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+        const advices: string[] = [];
+        for (const item of allPrescriptions) {
+          const trimmed = item.advice?.trim();
+          if (trimmed && !advices.includes(trimmed)) {
+            advices.push(trimmed);
+          }
+          if (advices.length >= 3) break;
+        }
+
+        setRecentGeneralAdvices(advices);
+      } catch (error) {
+        console.error("Error fetching recent advices:", error);
+      }
+    };
+
+    fetchRecentAdvices();
+  }, [doctorId]);
+
+  // --- NEW: FETCH INTAKE DATA (Auto-fill) ---
+  useEffect(() => {
+    if (!selectedPatient?.uhid) return;
+
+    const q = query(
+      collection(db, "preOPDIntake"),
+      where("patientUhid", "==", selectedPatient.uhid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const docs = snapshot.docs.map((doc) => doc.data());
+
+        docs.sort((a, b) => {
+          const dateA = a.recordedAt?.toDate
+            ? a.recordedAt.toDate()
+            : new Date(a.recordedAt || 0);
+          const dateB = b.recordedAt?.toDate
+            ? b.recordedAt.toDate()
+            : new Date(b.recordedAt || 0);
+          return dateB.getTime() - dateA.getTime();
+        });
+
+        const data = docs[0];
+
+        setIntakeData({
+          complaints: data.complaints || [],
+          chronicConditions: data.chronicConditions || [],
+          allergies: data.allergies || {
+            hasAllergies: false,
+            type: [],
+            substance: "",
+            reaction: "",
+            severity: "",
+          },
+          pastHistory: data.pastHistory || {
+            illnesses: [],
+            surgeries: [],
+            hospitalizations: [],
+            currentMedications: [],
+            overallCompliance: "Unknown",
+          },
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, [selectedPatient]);
+
+  const handleComplaintsChange = (data: Complaint[]) =>
+    setIntakeData((prev) => ({ ...prev, complaints: data }));
+  const handleChronicChange = (data: ChronicCondition[]) =>
+    setIntakeData((prev) => ({ ...prev, chronicConditions: data }));
+  const handleAllergiesChange = (data: Allergy) =>
+    setIntakeData((prev) => ({ ...prev, allergies: data }));
+  const handleHistoryChange = (data: PastHistory) =>
+    setIntakeData((prev) => ({ ...prev, pastHistory: data }));
+
+  const allMedsForCheck = useMemo(
+    () => [
+      ...intakeData.chronicConditions.flatMap((c) => c.medications),
+      ...intakeData.pastHistory.currentMedications,
+    ],
+    [intakeData.chronicConditions, intakeData.pastHistory.currentMedications]
+  );
+
+  // --- DRAG & DROP HANDLERS ---
+  const handleDragStart = (
+    e: React.DragEvent<HTMLDivElement>,
+    position: number
+  ) => {
+    dragItem.current = position;
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragEnter = (
+    e: React.DragEvent<HTMLDivElement>,
+    position: number
+  ) => {
+    e.preventDefault();
+    dragOverItem.current = position;
+
+    if (
+      dragItem.current !== null &&
+      dragItem.current !== dragOverItem.current
+    ) {
+      const newOrder = [...sectionOrder];
+      const draggedItemContent = newOrder[dragItem.current];
+      newOrder.splice(dragItem.current, 1);
+      newOrder.splice(dragOverItem.current, 0, draggedItemContent);
+      setSectionOrder(newOrder);
+      dragItem.current = dragOverItem.current;
+    }
+  };
+
+  const handleDragEnd = (e: React.DragEvent<HTMLDivElement>) => {
+    dragItem.current = null;
+    dragOverItem.current = null;
+  };
+
+  // --- VERTICAL RESIZE HANDLERS ---
+  const handleMouseDown = (
+    section: keyof typeof sectionHeights,
+    e: React.MouseEvent
+  ) => {
+    e.preventDefault();
+    draggingRef.current = section;
+    startYRef.current = e.clientY;
+    startHeightRef.current = sectionHeights[section];
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  };
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!draggingRef.current) return;
+    const deltaY = e.clientY - startYRef.current;
+    const newHeight = Math.max(150, startHeightRef.current + deltaY);
+    setSectionHeights((prev) => ({
+      ...prev,
+      [draggingRef.current!]: newHeight,
+    }));
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    draggingRef.current = null;
+    document.removeEventListener("mousemove", handleMouseMove);
+    document.removeEventListener("mouseup", handleMouseUp);
+  }, [handleMouseMove]);
+
+  // --- HORIZONTAL DRAG HANDLERS ---
+  const handleHorizontalMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingHorizontalRef.current = true;
+    document.addEventListener("mousemove", handleHorizontalMouseMove);
+    document.addEventListener("mouseup", handleHorizontalMouseUp);
+  };
+
+  const handleHorizontalMouseMove = useCallback((e: MouseEvent) => {
+    if (!draggingHorizontalRef.current || !examContainerRef.current) return;
+    const rect = examContainerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const widthPercent = (x / rect.width) * 100;
+    setExamColSplit(Math.max(20, Math.min(80, widthPercent)));
+  }, []);
+
+  const handleHorizontalMouseUp = useCallback(() => {
+    draggingHorizontalRef.current = false;
+    document.removeEventListener("mousemove", handleHorizontalMouseMove);
+    document.removeEventListener("mouseup", handleHorizontalMouseUp);
+  }, [handleHorizontalMouseMove]);
+
+  const handlePreOpdHorizontalMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingPreOpdHorizontalRef.current = true;
+    document.addEventListener("mousemove", handlePreOpdHorizontalMouseMove);
+    document.addEventListener("mouseup", handlePreOpdHorizontalMouseUp);
+  };
+
+  const handlePreOpdHorizontalMouseMove = useCallback((e: MouseEvent) => {
+    if (!draggingPreOpdHorizontalRef.current || !preOpdContainerRef.current)
+      return;
+    const rect = preOpdContainerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const widthPercent = (x / rect.width) * 100;
+    setPreOpdColSplit(Math.max(20, Math.min(80, widthPercent)));
+  }, []);
+
+  const handlePreOpdHorizontalMouseUp = useCallback(() => {
+    draggingPreOpdHorizontalRef.current = false;
+    document.removeEventListener("mousemove", handlePreOpdHorizontalMouseMove);
+    document.removeEventListener("mouseup", handlePreOpdHorizontalMouseUp);
+  }, [handlePreOpdHorizontalMouseMove]);
+
+  const [consultation, setConsultation] = useState({
+    symptoms: [{ id: 1, symptom: "", duration: "", factors: "" }],
+    duration: "",
+    aggravatingFactors: [] as string[],
+    generalExamination: [] as string[],
+    systemicExamination: [] as string[],
+    investigations: [] as string[],
+    diagnosis: "",
+    notes: "",
+  });
+
+  const [symptomOptions, setSymptomOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    const fetchSymptoms = async () => {
+      try {
+        const symptomsRef = collection(db, "symptoms");
+        const q = query(symptomsRef, orderBy("name"));
+        const querySnapshot = await getDocs(q);
+        const options = querySnapshot.docs.map((doc) => doc.data().name);
+        if (options.length > 0) {
+          setSymptomOptions(options);
+        } else {
+          setSymptomOptions([
+            "Fever",
+            "Cold",
+            "Cough",
+            "Diarrhea",
+            "Vomiting",
+            "Headache",
+            "Back Pain",
+          ]);
+        }
+      } catch (error) {
+        console.error("Error fetching symptoms:", error);
+        setSymptomOptions([
+          "Fever",
+          "Cold",
+          "Cough",
+          "Diarrhea",
+          "Vomiting",
+          "Headache",
+          "Back Pain",
+        ]);
+      }
+    };
+    fetchSymptoms();
+  }, []);
+
+  const addSymptomOption = async (symptom: string) => {
+    const trimmedSymptom = symptom.trim();
+    if (!trimmedSymptom) return;
+    if (
+      !symptomOptions.some(
+        (s) => s.toLowerCase() === trimmedSymptom.toLowerCase()
+      )
+    ) {
+      setSymptomOptions((prev) => [...prev, trimmedSymptom]);
+    }
+    try {
+      const docId = trimmedSymptom.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      const symptomRef = doc(db, "symptoms", docId);
+      await setDoc(
+        symptomRef,
+        {
+          name: trimmedSymptom,
+          searchKey: trimmedSymptom.toLowerCase(),
+          category: "Custom",
+          createdAt: Timestamp.now(),
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      console.error("Error adding symptom to database:", error);
+    }
+  };
+
+  const handleDiagnosisUpdate = useCallback((diagnosis: string) => {
+    setFinalDiagnosis(diagnosis);
+  }, []);
+
+  const handleToggleGeneralExam = (finding: string, isChecked: boolean) => {
+    setConsultation((prev) => ({
+      ...prev,
+      generalExamination: isChecked
+        ? [...prev.generalExamination, finding]
+        : prev.generalExamination.filter((f) => f !== finding),
+    }));
+  };
+
+  const handleSystemicExamChange = (system: string, value: string) => {
+    setConsultation((prev) => {
+      const existingIndex = prev.systemicExamination.findIndex((item) =>
+        item.startsWith(`${system}:`)
+      );
+      const newEntry = `${system}: ${value}`;
+      const newSystemicExam = [...prev.systemicExamination];
+      if (existingIndex > -1) {
+        newSystemicExam[existingIndex] = newEntry;
+      } else {
+        newSystemicExam.push(newEntry);
+      }
+      return { ...prev, systemicExamination: newSystemicExam };
+    });
+  };
+
+  const formatBloodPressure = (vitalsData: Vitals | null): string => {
+    if (!vitalsData) return "N/A";
+    const systolic = vitalsData.bpSystolic || "N/A";
+    const diastolic = vitalsData.bpDiastolic || "N/A";
+    if (systolic === "N/A" && diastolic === "N/A") return "N/A";
+    return `${systolic}/${diastolic}`;
+  };
+
+  const getVitalsDisplay = (): {
+    label: string;
+    value: string;
+    unit: string;
+  }[] => {
+    const standardVitals = [
+      {
+        label: "BP",
+        value: vitals ? formatBloodPressure(vitals) : "N/A",
+        unit: "mmHg",
+      },
+      { label: "PR", value: vitals?.pulse?.toString() || "N/A", unit: "bpm" },
+      { label: "SpO₂", value: vitals?.spo2?.toString() || "N/A", unit: "%" },
+      { label: "BMI", value: vitals?.bmi?.toString() || "N/A", unit: "" },
+      {
+        label: "RR",
+        value: vitals?.respiratoryRate?.toString() || "N/A",
+        unit: "/min",
+      },
+      { label: "Wt", value: vitals?.weight?.toString() || "N/A", unit: "kg" },
+      { label: "Ht", value: vitals?.height?.toString() || "N/A", unit: "cm" },
+    ];
+    if (vitals?.customVitals && vitals.customVitals.length > 0) {
+      const custom = vitals.customVitals.map((v) => ({
+        label: v.name,
+        value: v.value,
+        unit: v.unit,
+      }));
+      return [...standardVitals, ...custom];
+    }
+    return standardVitals;
+  };
+
+  useEffect(() => {
+    if (!selectedPatient?.uhid) {
+      setVitals(null);
+      return;
+    }
+    const vitalsQuery = query(
+      collection(db, "vitals"),
+      where("patientUhid", "==", selectedPatient.uhid)
+    );
+    const unsubscribe = onSnapshot(vitalsQuery, (snapshot) => {
+      if (snapshot.docs.length > 0) {
+        const allVitals = snapshot.docs.map((doc) => {
+          const data = doc.data() as Vitals;
+          const recordedAtDate =
+            data.recordedAt && (data.recordedAt as any).toDate
+              ? (data.recordedAt as any).toDate()
+              : new Date(0);
+          return { ...data, recordedAt: recordedAtDate };
+        });
+        allVitals.sort(
+          (a, b) => b.recordedAt.getTime() - a.recordedAt.getTime()
+        );
+        setVitals(allVitals[0]);
+      } else {
+        setVitals(null);
+      }
+    });
+    return () => unsubscribe();
+  }, [selectedPatient]);
+
+  useEffect(() => {
+    if (!selectedPatient?.uhid) {
+      setPreOpdClinicalSummary("No patient selected.");
+      setPreOpdHistorySummary("No patient selected.");
+      setIsPreOpdLoading(false);
+      return;
+    }
+    setIsPreOpdLoading(true);
+    const intakeQuery = query(
+      collection(db, "preOPDIntake"),
+      where("patientUhid", "==", selectedPatient.uhid)
+    );
+    const unsubscribe = onSnapshot(
+      intakeQuery,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const docs = snapshot.docs
+            .map((d) => d.data() as any)
+            .map((d) => ({
+              ...d,
+              recordedAt:
+                d.recordedAt?.toDate?.() ??
+                (typeof d.recordedAt === "string"
+                  ? new Date(d.recordedAt)
+                  : new Date(0)),
+            }))
+            .sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());
+          const latest = docs[0];
+          setPreOpdClinicalSummary(
+            latest?.aiClinicalSummary || "N/A - Not generated in Pre-OPD."
+          );
+          setPreOpdHistorySummary(
+            latest?.aiHistorySummary || "N/A - Not generated in Pre-OPD."
+          );
+        } else {
+          setPreOpdClinicalSummary(
+            "No Pre-OPD intake record found for this patient."
+          );
+          setPreOpdHistorySummary(
+            "No Pre-OPD intake record found for this patient."
+          );
+        }
+        setIsPreOpdLoading(false);
+      },
+      (error) => {
+        console.error("Error fetching Pre-OPD Intake:", error);
+        setPreOpdClinicalSummary("Error fetching summary data.");
+        setPreOpdHistorySummary("Error fetching summary data.");
+        setIsPreOpdLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, [selectedPatient]);
+
+  const handleAddToInPatient = () => {
+    if (selectedPatient) {
+      setShowAdmissionModal(true);
+    }
+  };
+
+  const handleConfirmAdmission = (admissionData: AdmissionData) => {
+    console.log(
+      `IPD Admission Confirmed for ${selectedPatient?.fullName}:`,
+      admissionData
+    );
+    setShowAdmissionModal(false);
+  };
+
+  const handleFinalComplete = async () => {
+    if (!selectedPatient || !selectedPatient.uhid) return;
+    const prescriptionData = {
+      patientId: selectedPatient.id,
+      uhid: selectedPatient.uhid,
+      patientName: selectedPatient.fullName,
+      doctorName: doctorName,
+      doctorId: doctorId,
+      prescriptionDate: Timestamp.now(),
+      medications: medications.map((med) => ({
+        id: med.id,
+        drugName: med.name,
+        dosage: med.dosage,
+        frequency: med.frequency,
+        duration: med.duration,
+        instructions: med.instructions,
+        quantity: 0,
+        unitPrice: 0.0,
+        totalPrice: 0.0,
+        dispensed: false,
+      })),
+      status: "Pending",
+      patientType: patientType,
+      consultationNotes: consultation.notes,
+      finalDiagnosis: finalDiagnosis,
+      totalAmount: 0,
+      generalAdvice: advice.general, // 🟢 Added generalAdvice
+      diet: advice.diet,
+      followUp: advice.followUp,
+    };
+    try {
+      const prescriptionsRef = collection(db, "prescriptions");
+      await addDoc(prescriptionsRef, prescriptionData);
+      const patientRef = doc(db, "patients", selectedPatient.id);
+      await setDoc(patientRef, { status: "Completed" }, { merge: true });
+      setShowSummaryModal(false);
+      onCompleteConsultation(selectedPatient.id);
+    } catch (error) {
+      console.error(
+        "Error completing consultation & saving prescription:",
+        error
+      );
+      alert(
+        "Failed to save prescription or mark consultation complete. Check console for details."
+      );
+      setShowSummaryModal(false);
+    }
+  };
+
+  const handleReviewAndComplete = () => {
+    if (!selectedPatient) {
+      alert("No patient selected to complete consultation.");
+      return;
+    }
+    if (!finalDiagnosis) {
+      alert(
+        "Please enter a Final Diagnosis in the AI Assist section before completing the consultation."
+      );
+      return;
+    }
+    setShowSummaryModal(true);
+  };
+
+  // --- RENDER SECTION FUNCTION ---
+  const renderSection = (key: SectionKey, index: number) => {
+    const commonWrapperClass =
+      "bg-white rounded-lg border border-gray-200 shadow-md overflow-hidden relative mb-4 transition-all duration-200";
+    const dragProps = {
+      draggable: true,
+      onDragStart: (e: React.DragEvent<HTMLDivElement>) =>
+        handleDragStart(e, index),
+      onDragEnter: (e: React.DragEvent<HTMLDivElement>) =>
+        handleDragEnter(e, index),
+      onDragEnd: handleDragEnd,
+      onDragOver: (e: React.DragEvent<HTMLDivElement>) => e.preventDefault(),
+    };
+
+    switch (key) {
+      case "assessment":
+        return (
+          <div
+            key="assessment"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.assessment }}
+            {...dragProps}
+          >
+            <div className="p-4 h-full flex flex-col overflow-hidden">
+              <SectionHeader
+                icon={Stethoscope}
+                title="Clinical Assessment"
+                dragHandle={<GripVertical className="w-5 h-5" />}
+              />
+              <div className="flex-1 overflow-y-auto pr-1">
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="lg:col-span-3 bg-white p-4 rounded-lg border border-gray-200 shadow-md">
+                    <SectionHeader
+                      icon={Activity}
+                      title="Current Vitals Snapshot"
+                    />
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      {getVitalsDisplay().map((vital) => (
+                        <div
+                          key={vital.label}
+                          className="text-center p-3 bg-gradient-to-b from-gray-50 to-white rounded-md border border-gray-100"
+                        >
+                          <p className="text-md font-medium text-gray-500 mb-1">
+                            {vital.label}
+                          </p>
+                          <p className="font-bold text-lg text-[#0B2D4D]">
+                            {vital.value}
+                          </p>
+                          {vital.unit && (
+                            <p className="text-md text-gray-400 mt-0.5">
+                              {vital.unit}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {vitals && (
+                      <div className="mt-3 pt-2 border-t border-gray-200">
+                        <p className="text-md text-gray-600">
+                          Last recorded:{" "}
+                          {vitals.recordedAt &&
+                          (vitals.recordedAt as any).toDate
+                            ? (vitals.recordedAt as any)
+                                .toDate()
+                                .toLocaleString()
+                            : new Date(vitals.recordedAt).toLocaleString()}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    <h2 className="text-xl font-bold text-[#0B2D4D] tracking-tight flex items-center space-x-2 mt-2">
+                      <Brain className="w-6 h-6 text-purple-600" />
+                      <span>Pre-OPD AI Summary & History</span>
+                    </h2>
+                    <div
+                      ref={preOpdContainerRef}
+                      className="flex flex-col lg:flex-row gap-4"
+                    >
+                      <div
+                        style={{
+                          width: isDesktop ? `${preOpdColSplit}%` : "100%",
+                        }}
+                      >
+                        <SummaryCard
+                          title="Clinical Status (Vitals + Complaints)"
+                          summary={preOpdClinicalSummary}
+                          isLoading={isPreOpdLoading}
+                        />
+                      </div>
+
+                      <HorizontalResizeHandle
+                        onMouseDown={handlePreOpdHorizontalMouseDown}
+                      />
+
+                      <div
+                        style={{
+                          width: isDesktop
+                            ? `calc(${100 - preOpdColSplit}% - 1rem)`
+                            : "100%",
+                        }}
+                      >
+                        <SummaryCard
+                          title="Medical History (Records + Checklist)"
+                          summary={preOpdHistorySummary}
+                          isLoading={isPreOpdLoading}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle
+                onMouseDown={(e) => handleMouseDown("assessment", e)}
+              />
+            </div>
+          </div>
+        );
+
+      case "complaints":
+        return (
+          <div
+            key="complaints"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.complaints }}
+            {...dragProps}
+          >
+            <div className="p-0 h-full flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto">
+                <DoctorPresentingComplaintsSection
+                  data={intakeData.complaints}
+                  onChange={handleComplaintsChange}
+                  symptomOptions={symptomOptions}
+                  addSymptomOption={addSymptomOption}
+                />
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle
+                onMouseDown={(e) => handleMouseDown("complaints", e)}
+              />
+            </div>
+          </div>
+        );
+
+      case "chronic":
+        return (
+          <div
+            key="chronic"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.chronic }}
+            {...dragProps}
+          >
+            <div className="p-0 h-full flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto">
+                <ChronicConditionsSection
+                  data={intakeData.chronicConditions}
+                  onChange={handleChronicChange}
+                />
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle
+                onMouseDown={(e) => handleMouseDown("chronic", e)}
+              />
+            </div>
+          </div>
+        );
+
+      case "allergies":
+        return (
+          <div
+            key="allergies"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.allergies }}
+            {...dragProps}
+          >
+            <div className="p-0 h-full flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto">
+                <AllergiesSection
+                  data={intakeData.allergies}
+                  onChange={handleAllergiesChange}
+                  allMeds={allMedsForCheck}
+                />
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle
+                onMouseDown={(e) => handleMouseDown("allergies", e)}
+              />
+            </div>
+          </div>
+        );
+
+      case "history":
+        return (
+          <div
+            key="history"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.history }}
+            {...dragProps}
+          >
+            <div className="p-0 h-full flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto">
+                <PastHistorySection
+                  data={intakeData.pastHistory}
+                  onChange={handleHistoryChange}
+                  chronicMeds={intakeData.chronicConditions.flatMap(
+                    (c) => c.medications
+                  )}
+                />
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle
+                onMouseDown={(e) => handleMouseDown("history", e)}
+              />
+            </div>
+          </div>
+        );
+
+      case "exam":
+        return (
+          <div
+            key="exam"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.exam }}
+            {...dragProps}
+          >
+            <div className="p-4 h-full flex flex-col overflow-hidden">
+              <div className="flex justify-between items-center mb-2">
+                <h2 className="text-lg font-bold text-[#0B2D4D] flex items-center gap-2">
+                  <Eye className="w-4 h-4" /> Examination
+                </h2>
+                <div className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-[#012e58]">
+                  <GripVertical className="w-5 h-5" />
+                </div>
+              </div>
+              <div
+                ref={examContainerRef}
+                className="flex flex-col lg:flex-row gap-4 flex-1 overflow-y-auto"
+              >
+                <div
+                  className="bg-white p-4 rounded-lg border border-gray-200 shadow-md flex-shrink-0"
+                  style={{ width: isDesktop ? `${examColSplit}%` : "100%" }}
+                >
+                  <div className="mb-4 border-b border-gray-200 pb-4">
+                    <label className="flex items-center space-x-2 cursor-pointer mb-3">
+                      <input
+                        type="checkbox"
+                        checked={showGeneralExam}
+                        onChange={(e) => setShowGeneralExam(e.target.checked)}
+                        className="w-4 h-4 text-[#012e58] rounded focus:ring-[#012e58]"
+                      />
+                      <span className="text-lg font-bold text-[#0B2D4D]">
+                        Perform General Examination
+                      </span>
+                    </label>
+
+                    {showGeneralExam && (
+                      <div className="grid grid-cols-2 gap-2 animate-fade-in">
+                        {[
+                          "Pallor",
+                          "Icterus",
+                          "Cyanosis",
+                          "Clubbing",
+                          "LAP",
+                        ].map((item) => (
+                          <label
+                            key={item}
+                            className="flex items-center space-x-1.5 p-2 bg-gray-50 rounded-md border border-gray-200 hover:bg-[#012e58]/5 transition-colors cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={consultation.generalExamination.includes(
+                                item
+                              )}
+                              onChange={(e) =>
+                                handleToggleGeneralExam(item, e.target.checked)
+                              }
+                              className="rounded border-gray-300 text-[#012e58] focus:ring-[#012e58] focus:ring-2"
+                            />
+                            <span className="text-md font-medium text-[#0B2D4D]">
+                              {item}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="flex items-center space-x-2 cursor-pointer mb-3">
+                      <input
+                        type="checkbox"
+                        checked={showSystemicExam}
+                        onChange={(e) => setShowSystemicExam(e.target.checked)}
+                        className="w-4 h-4 text-[#012e58] rounded focus:ring-[#012e58]"
+                      />
+                      <span className="text-lg font-bold text-[#0B2D4D]">
+                        Perform Systemic Examination
+                      </span>
+                    </label>
+
+                    {showSystemicExam && (
+                      <div className="space-y-3 animate-fade-in">
+                        {[
+                          { label: "CNS", placeholder: "CNS findings" },
+                          { label: "RS", placeholder: "Respiratory findings" },
+                          {
+                            label: "CVS",
+                            placeholder: "Cardiovascular findings",
+                          },
+                          { label: "P/A", placeholder: "Abdomen findings" },
+                        ].map((system) => {
+                          const currentEntry =
+                            consultation.systemicExamination.find((item) =>
+                              item.startsWith(`${system.label}:`)
+                            ) || `${system.label}: `;
+                          const currentValue = currentEntry.substring(
+                            system.label.length + 2
+                          );
+                          return (
+                            <div key={system.label} className="space-y-1">
+                              <label className="text-md font-semibold text-[#1a4b7a] block">
+                                {system.label}
+                              </label>
+                              <textarea
+                                className="w-full p-2 border border-gray-300 rounded-md bg-gray-50 focus:ring-2 focus:ring-[#012e58] focus:border-[#012e58] transition duration-200 resize-none text-lg"
+                                rows={1}
+                                placeholder={system.placeholder}
+                                value={currentValue}
+                                onChange={(e) =>
+                                  handleSystemicExamChange(
+                                    system.label,
+                                    e.target.value
+                                  )
+                                }
+                              ></textarea>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <HorizontalResizeHandle
+                  onMouseDown={handleHorizontalMouseDown}
+                />
+                <div
+                  className="bg-white p-4 rounded-lg border border-gray-200 shadow-md flex-grow"
+                  style={{
+                    width: isDesktop
+                      ? `calc(${100 - examColSplit}% - 1rem)`
+                      : "100%",
+                  }}
+                >
+                  <SectionHeader icon={BookOpen} title="Local Examination" />
+                  <textarea
+                    rows={4}
+                    placeholder="Enter Local Examination details here..."
+                    value={consultation.notes}
+                    onChange={(e) =>
+                      setConsultation((prev) => ({
+                        ...prev,
+                        notes: e.target.value,
+                      }))
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#1a4b7a] focus:border-transparent text-lg resize-none"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle onMouseDown={(e) => handleMouseDown("exam", e)} />
+            </div>
+          </div>
+        );
+
+      case "ai":
+        return (
+          <div
+            key="ai"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.ai }}
+            {...dragProps}
+          >
+            <div className="p-4 h-full flex flex-col overflow-hidden">
+              <SectionHeader
+                icon={Brain}
+                title="AI Diagnostic & Treatment Assist"
+                dragHandle={<GripVertical className="w-5 h-5" />}
+              />
+              <div className="flex-1 overflow-y-auto">
+                <Ai
+                  consultation={consultation}
+                  selectedPatient={selectedPatient}
+                  vitals={vitals}
+                  onDiagnosisUpdate={handleDiagnosisUpdate}
+                  preOpdClinicalSummary={preOpdClinicalSummary}
+                  preOpdHistorySummary={preOpdHistorySummary}
+                  intakeData={intakeData}
+                />
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle onMouseDown={(e) => handleMouseDown("ai", e)} />
+            </div>
+          </div>
+        );
+
+      case "prescription":
+        return (
+          <div
+            key="prescription"
+            className={commonWrapperClass}
+            style={{ height: sectionHeights.prescription }}
+            {...dragProps}
+          >
+            <div className="p-4 h-full flex flex-col overflow-hidden">
+              <SectionHeader
+                icon={Pill}
+                title="Medication & Advice"
+                dragHandle={<GripVertical className="w-5 h-5" />}
+              />
+              <div className="flex-1 overflow-y-auto">
+                <PrescriptionModule
+                  selectedPatient={selectedPatient}
+                  consultation={consultation}
+                  advice={advice} // 🟢 Pass advice state
+                  setAdvice={setAdvice} // 🟢 Pass setAdvice
+                  recentGeneralAdvices={recentGeneralAdvices} // 🟢 Pass fetched recent advices
+                />
+              </div>
+            </div>
+            <div className="absolute bottom-0 w-full bg-white border-t border-gray-100">
+              <ResizeHandle
+                onMouseDown={(e) => handleMouseDown("prescription", e)}
+              />
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  if (!selectedPatient) {
+    return <PatientQueue />;
+  }
+
+  return (
+    <div className="p-2 bg-gray-100 min-h-screen font-sans">
+      <div className="w-full bg-white p-4 rounded-lg shadow-lg border border-gray-200">
+        <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={onBack}
+              className="flex items-center space-x-1.5 px-3 py-1.5 text-[#1a4b7a] hover:text-[#0B2D4D] hover:bg-gray-100 rounded-md transition-colors border border-gray-200 text-lg"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="font-medium">Back to Queue</span>
+            </button>
+          </div>
+          <div className="bg-gradient-to-r from-[#012e58]/5 to-[#1a4b7a]/5 rounded-lg border border-gray-200 p-3 shadow-sm">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-[#012e58] rounded-full flex items-center justify-center">
+                <span className="text-white font-bold text-lg">
+                  {selectedPatient.fullName
+                    ?.split(" ")
+                    .map((n) => n[0])
+                    .join("")}
+                </span>
+              </div>
+              <div>
+                <p className="font-bold text-lg text-[#0B2D4D]">
+                  {selectedPatient.fullName}
+                </p>
+                <p className="text-[#1a4b7a] font-medium text-md">
+                  {selectedPatient.uhid} • {selectedPatient.age}Y •{" "}
+                  {selectedPatient.gender}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>{sectionOrder.map((key, index) => renderSection(key, index))}</div>
+
+        <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-200">
+          <div className="flex items-center space-x-3">
+            <button className="group flex items-center px-4 py-2 border border-[#012e58] rounded-md text-[#012e58] bg-white hover:bg-[#012e58] hover:text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#012e58] transition-all duration-300 text-lg font-medium">
+              <Save className="w-4 h-4 mr-1.5 transition-transform duration-300 group-hover:scale-110" />
+              Save Draft
+            </button>
+            <button
+              onClick={handleAddToInPatient}
+              className="group flex items-center px-4 py-2 bg-red-500 text-white font-semibold rounded-md shadow-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-all duration-300 text-lg"
+            >
+              <Hospital className="w-4 h-4 mr-1.5" />
+              <span>Add to In-Patient</span>
+            </button>
+          </div>
+          <button
+            onClick={handleReviewAndComplete}
+            className="group flex items-center px-4 py-2 bg-green-600 text-white font-semibold rounded-md shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-600 transition-all duration-300 text-lg"
+          >
+            <span>Complete Consultation & Review</span>
+            <CheckCircle className="w-4 h-4 ml-1.5" />
+          </button>
+        </div>
+      </div>
+
+      {showAdmissionModal && selectedPatient && (
+        <InPatientAdmissionModal
+          patient={selectedPatient}
+          onClose={() => setShowAdmissionModal(false)}
+          onConfirm={handleConfirmAdmission}
+        />
+      )}
+
+      {selectedPatient && (
+        <ConsultationSummaryModal
+          isOpen={showSummaryModal}
+          onClose={() => setShowSummaryModal(false)}
+          onFinalComplete={handleFinalComplete}
+          patient={selectedPatient}
+          medications={medications}
+          consultation={{ ...consultation, diagnosis: finalDiagnosis }}
+        />
+      )}
+    </div>
+  );
+};
+
+export const DoctorModule: React.FC<DoctorModuleProps> = (props) => {
+  return (
+    <PrescriptionProvider>
+      <DoctorModuleContent {...props} />
+    </PrescriptionProvider>
+  );
+};
+
+export default DoctorModule;
