@@ -1,10 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
-  Users,
   Calendar,
   CheckCircle,
-  AlertCircle,
-  TrendingUp,
   Activity,
   Pill,
   TestTube,
@@ -62,7 +59,7 @@ export const Dashboard: React.FC = () => {
     ],
   };
 
-  const [userName, setUserName] = useState<string | null>(null);
+  // const [userName, setUserName] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<CategoryType>(null);
 
   // Mock data for daily appointments vs treatment
@@ -76,10 +73,10 @@ export const Dashboard: React.FC = () => {
     { date: "Jan 07", appointments: 178, treatments: 156 },
   ];
 
-  useEffect(() => {
-    // Mock cookie reading - in real implementation would use Cookies.get("userName")
-    setUserName("Dr. Smith");
-  }, []);
+  // useEffect(() => {
+  //   // Mock cookie reading - in real implementation would use Cookies.get("userName")
+  //   setUserName("Dr. Smith");
+  // }, []);
 
   const getCategoryData = (category: CategoryType) => {
     switch (category) {

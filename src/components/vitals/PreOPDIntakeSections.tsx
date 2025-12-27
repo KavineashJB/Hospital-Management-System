@@ -760,7 +760,7 @@ export const ChronicConditionsSection: React.FC<
                           </div>
 
                           <div className="mb-4">
-                            <label className="block text-lg font-medium text-gray-700 mb-1 flex items-center gap-2">
+                            <label className="text-lg font-medium text-gray-700 mb-1 flex items-center gap-2">
                               <FileText className="w-4 h-4 text-gray-500" />
                               Notes / Comments
                             </label>

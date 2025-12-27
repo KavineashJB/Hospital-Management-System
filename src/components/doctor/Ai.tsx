@@ -1,20 +1,10 @@
 // src/components/doctor/Ai.tsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import {
-  Copy,
-  Plus,
-  Bot,
-  User,
-  Brain,
-  Loader,
-  FlaskConical,
-  Trash2,
-  X,
-} from "lucide-react";
-import { Patient, Medication, PreOPDIntakeData } from "../../types";
+import { Copy, Bot, User, Brain, Loader, X } from "lucide-react";
+import { Patient, Medication } from "../../types";
 import { usePrescription } from "../../contexts/PrescriptionContext";
-import { db } from "../../firebase";
-import { collection, addDoc } from "firebase/firestore";
+// import { db } from "../../firebase";
+// import { collection, addDoc } from "firebase/firestore";
 
 // --- RESIZE HANDLE COMPONENT ---
 const HorizontalResizeHandle: React.FC<{
@@ -91,7 +81,7 @@ const MedicalDashboard: React.FC<MedicalDashboardProps> = ({
   intakeData,
 }) => {
   const { addMedications } = usePrescription();
-  const currentUser = { staffId: "DOC_987" };
+  // const currentUser = { staffId: "DOC_987" };
 
   const [diagnosis, setDiagnosis] = useState<DiagnosisData>({
     aiSuggested: "",
@@ -107,7 +97,7 @@ const MedicalDashboard: React.FC<MedicalDashboardProps> = ({
     });
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isSendingLab, setIsSendingLab] = useState(false);
+  // const [isSendingLab, setIsSendingLab] = useState(false);
 
   const [split, setSplit] = useState(50);
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
@@ -146,7 +136,7 @@ const MedicalDashboard: React.FC<MedicalDashboardProps> = ({
   // Ref for aborting requests
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const labResults = ["ECG", "X-RAY", "TCA-troraric", "In-xity coavortiatric"];
+  // const labResults = ["ECG", "X-RAY", "TCA-troraric", "In-xity coavortiatric"];
 
   const handleStopGeneration = () => {
     if (abortControllerRef.current) {
